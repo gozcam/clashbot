@@ -1,7 +1,9 @@
 import os
+
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+
 from commands import setup_commands, resume_auto_polling
 
 # Load environment variables
@@ -10,19 +12,30 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 CLASH_TOKEN = os.getenv('CLASH_TOKEN')
 
-# Define bot intents and object
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents, application_id=os.getenv('DISCORD_APPLICATION_ID'))
 
-# Set up commands
-setup_commands(bot)
+class ClashBot(commands.Bot):
+    async def setup_hook(self):
+        setup_commands(self)
+        await self.tree.sync()
+        await resume_auto_polling()
 
-from asyncio import create_task
+
+intents = discord.Intents.default()
+bot = ClashBot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
     print(f'{bot.user} is now online!')
-    await bot.tree.sync()
-    create_task(resume_auto_polling())
+
 if __name__ == '__main__':
+    missing_variables = [
+        name
+        for name, value in {
+            'DISCORD_TOKEN': DISCORD_TOKEN,
+            'CLASH_TOKEN': CLASH_TOKEN,
+        }.items()
+        if not value
+    ]
+    if missing_variables:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing_variables)}")
     bot.run(DISCORD_TOKEN)

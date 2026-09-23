@@ -1,5 +1,5 @@
 import discord
-from discord.ext import tasks, commands
+from discord.ext import tasks
 from discord import app_commands
 import coc_api
 import utils
@@ -7,8 +7,62 @@ from json_manager import update_player_stats, get_player_stats
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-tracked_servers ={}
-active_clan_polling = {}  # Structure: { "clan_tag": WarTracker instance }
+tracked_servers = {}
+active_clan_polling = {}
+
+
+def build_war_stats_embed(player_stats, title, color):
+    embed = discord.Embed(title=title, description="Clashbot Tracked War Stats", color=color)
+    total_attacks = player_stats['total_attacks']
+    possible_attacks = player_stats['total_possible_attacks']
+    wars_attacked = player_stats['wars_attacked']
+
+    embed.add_field(name="🛡️ Wars", value=wars_attacked, inline=True)
+    embed.add_field(name="✅ Completed", value=player_stats['used_all_attacks'], inline=True)
+    embed.add_field(
+        name="📈 Completion Rate",
+        value=f"{player_stats['used_all_attacks'] / wars_attacked:.2%}" if wars_attacked else "0.00%",
+        inline=True,
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=False)
+    embed.add_field(name="⚔️ Attacks", value=total_attacks, inline=True)
+    embed.add_field(name="🏹 Possible Attacks", value=possible_attacks, inline=True)
+    embed.add_field(
+        name="📈 Attack Rate",
+        value=f"{total_attacks / possible_attacks:.2%}" if possible_attacks else "0.00%",
+        inline=True,
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=False)
+    embed.add_field(name="⭐ Stars", value=player_stats['total_stars'], inline=True)
+    embed.add_field(name="✨ Average Stars", value=f"{player_stats['average_stars']:.2f}", inline=True)
+    embed.add_field(
+        name="📊 Star Efficiency",
+        value=f"{player_stats['total_stars'] / (total_attacks * 3):.2%}" if total_attacks else "0.00%",
+        inline=True,
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=False)
+    embed.add_field(name="🔥 Destruction", value=f"{player_stats['total_destruction_percentage']:.2f}%", inline=True)
+    embed.add_field(name="💥 Average Destruction", value=f"{player_stats['average_destruction_percentage']:.2f}%", inline=True)
+    embed.add_field(
+        name="📊 Destruction Efficiency",
+        value=f"{player_stats['total_destruction_percentage'] / (total_attacks * 100):.2%}" if total_attacks else "0.00%",
+        inline=True,
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=False)
+    embed.add_field(name="🌟🌟🌟", value=player_stats['three_stars'], inline=True)
+    embed.add_field(name="⭐⭐", value=player_stats['two_stars'], inline=True)
+    embed.add_field(name="⭐", value=player_stats['one_stars'], inline=True)
+    embed.add_field(name="\u200b", value="\u200b", inline=False)
+    embed.add_field(
+        name="🌟 3-Star Rate",
+        value=f"{player_stats['three_stars'] / total_attacks:.2%}" if total_attacks else "0.00%",
+        inline=True,
+    )
+    scored_attacks = player_stats['three_stars'] + player_stats['two_stars'] + player_stats['one_stars']
+    embed.add_field(name="🍩 Donuts", value=total_attacks - scored_attacks, inline=True)
+    return embed
+
+
 async def resume_auto_polling():
     guild_data = utils.load_guild_data()  # Load the guild data from the JSON file
 
@@ -49,7 +103,8 @@ class ClanInfoView(discord.ui.View):
         basic_info_embed.add_field(name="Level", value=self.clan_info['clanLevel'], inline=False)
         basic_info_embed.add_field(name="Members", value=self.clan_info['members'], inline=False)
         basic_info_embed.add_field(name="Clan Trophies", value=self.clan_info['clanPoints'], inline=False)
-        basic_info_embed.add_field(name="Location", value=self.clan_info['location']['name'], inline=False)
+        location = self.clan_info.get('location', {}).get('name', 'Unknown')
+        basic_info_embed.add_field(name="Location", value=location, inline=False)
         basic_info_embed.set_thumbnail(url=self.clan_info['badgeUrls']['medium'])
 
         # Page 2: War Info
@@ -69,7 +124,8 @@ class ClanInfoView(discord.ui.View):
             win_ratestr = "N/A"
 
         
-        war_info_embed.add_field(name="League", value=self.clan_info['warLeague']['name'], inline=False)
+        war_league = self.clan_info.get('warLeague', {}).get('name', 'Unranked')
+        war_info_embed.add_field(name="League", value=war_league, inline=False)
         war_info_embed.add_field(name="Wars Won", value=war_wins, inline=False)
         war_info_embed.add_field(name="Wars Lost", value=self.clan_info.get('warLosses', 'Hidden'), inline=False)
         war_info_embed.add_field(name="Wars Tied", value=self.clan_info.get('warTies', 'Hidden'), inline=False)
@@ -83,7 +139,8 @@ class ClanInfoView(discord.ui.View):
             description="Capital Peak Info",
             color=discord.Color.blurple()
         )
-        capital_info_embed.add_field(name="Capital Hall Level", value=self.clan_info['clanCapital'].get('capitalHallLevel', 'Unknown'), inline=False)
+        capital_hall_level = self.clan_info.get('clanCapital', {}).get('capitalHallLevel', 'Unknown')
+        capital_info_embed.add_field(name="Capital Hall Level", value=capital_hall_level, inline=False)
         capital_info_embed.set_thumbnail(url=self.clan_info['badgeUrls']['medium'])
 
         # Return all the embeds in a list
@@ -198,7 +255,13 @@ class PlayerInfoView(discord.ui.View):
             description=f"League Data",
             color=discord.Color.gold()
         )
-        league_embed.add_field(name="League", value=self.player_info['league']['name'], inline=False)
+        if 'league' in self.player_info:
+            league_embed.add_field(name="League", value=self.player_info['league']['name'], inline=False)
+            if 'iconUrls' in self.player_info['league']:
+                league_embed.set_thumbnail(url=self.player_info['league']['iconUrls']['medium'])
+        else:
+            league_embed.add_field(name="League", value='Unranked', inline=False)
+
         league_embed.add_field(name="Trophies", value=self.player_info['trophies'], inline=False)
         league_embed.add_field(name="Peak", value=self.player_info['bestTrophies'], inline=False)
         if 'legendStatistics' in self.player_info:
@@ -208,9 +271,6 @@ class PlayerInfoView(discord.ui.View):
                 league_embed.add_field(name="Best Season", value=f"{self.player_info['legendStatistics']['bestSeason']['id']} | {self.player_info['legendStatistics']['bestSeason']['trophies']}", inline=False)
             if 'previousSeason' in self.player_info['legendStatistics']:
                 league_embed.add_field(name="Previous Season", value=f"{self.player_info['legendStatistics']['previousSeason']['id']} | {self.player_info['legendStatistics']['previousSeason']['trophies']}", inline=False)
-
-        if 'league' in self.player_info and 'iconUrls' in self.player_info['league']:
-            league_embed.set_thumbnail(url=self.player_info['league']['iconUrls']['medium'])
         
         embeds.append(league_embed)
 
@@ -221,72 +281,43 @@ class PlayerInfoView(discord.ui.View):
             color=discord.Color.gold()
         )
 
-        # Assuming 'warStars' is directly from the player_info
         war_embed.add_field(name="War Stars", value=self.player_info.get('warStars', 'Unknown'), inline=True)
         war_embed.add_field(name="War Preference", value=self.player_info.get('warPreference', 'Unknown'), inline=True)
-        war_embed.add_field(name="**Clashbots Tracked Data**", value="------------------------", inline=False)
-        # Fetch war stats from the JSON file
         player_tag = self.player_info['tag']
         player_stats = get_player_stats(player_tag)
-
-        separator = "Clashbots Tracked Data"
-        war_embed.add_field(name="🛡️ Wars", value=player_stats['wars_attacked'], inline=True)
-        war_embed.add_field(name="✅ Completed", value=player_stats['used_all_attacks'], inline=True)
-        war_embed.add_field(name="📈 Completion Rate", value=f"{player_stats['used_all_attacks'] / player_stats['wars_attacked']:.2f}" if player_stats['wars_attacked'] > 0 else "0.00", inline=True)
-
-        war_embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Attack stats section
-        war_embed.add_field(name="⚔️ Attacks", value=player_stats['total_attacks'], inline=True)
-        war_embed.add_field(name="🏹 Possible Attacks", value=player_stats['total_possible_attacks'], inline=True)
-        war_embed.add_field(name="📈 Attack Rate", value=f"{player_stats['total_attacks'] / player_stats['total_possible_attacks']:.2f}" if player_stats['total_possible_attacks'] > 0 else "0.00", inline=True)
-
-        war_embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Star stats section
-        war_embed.add_field(name="⭐ Stars", value=player_stats['total_stars'], inline=True)
-        war_embed.add_field(name="✨ Average Stars", value=f"{player_stats['average_stars']:.2f}", inline=True)
-        war_embed.add_field(name="📊 Star Efficiency", value=f"{(player_stats['total_stars'] / (player_stats['total_attacks'] * 3)) * 100:.2f}%" if player_stats['total_attacks'] > 0 else "0.00%", inline=True)
-
-        war_embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Destruction stats section
-        war_embed.add_field(name="🔥 Destruction", value=f"{player_stats['total_destruction_percentage']:.2f}%", inline=True)
-        war_embed.add_field(name="💥 Average Destruction", value=f"{player_stats['average_destruction_percentage']:.2f}%", inline=True)
-        war_embed.add_field(name="📊 Destruction Efficiency", value=f"{(player_stats['total_destruction_percentage'] / (player_stats['total_attacks'] * 100)) * 100:.2f}%" if player_stats['total_attacks'] > 0 else "0.00%", inline=True)
-
-        war_embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Star type stats section
-        war_embed.add_field(name="🌟🌟🌟", value=player_stats['three_stars'], inline=True)
-        war_embed.add_field(name="⭐⭐", value=player_stats['two_stars'], inline=True)
-        war_embed.add_field(name="⭐", value=player_stats['one_stars'], inline=True)
-
-        war_embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Final stats section
-        war_embed.add_field(name="🌟 3-Star Rate", value=f"{player_stats['three_stars'] / player_stats['total_attacks']:.2f}" if player_stats['total_stars'] > 0 else "0.00", inline=True)
-        war_embed.add_field(name="🍩 Donuts", value=player_stats['total_attacks'] - (player_stats['three_stars'] + player_stats['two_stars'] + player_stats['one_stars']), inline=True)
+        if player_stats:
+            tracked_stats_embed = build_war_stats_embed(
+                player_stats,
+                self.player_info['name'],
+                discord.Color.red(),
+            )
+            tracked_stats_embed.description = "Clashbot Tracked War Stats"
+            embeds.append(tracked_stats_embed)
+        else:
+            war_embed.add_field(
+                name="Clashbot Tracked Data",
+                value="No tracked war attacks are available for this player yet.",
+                inline=False,
+            )
 
         # Set thumbnail if league info exists
         if 'league' in self.player_info and 'iconUrls' in self.player_info['league']:
             war_embed.set_thumbnail(url=self.player_info['league']['iconUrls']['medium'])
 
         embeds.append(war_embed)
-        # Page 4: Builder Data
-        builder_embed = discord.Embed(
-            title=f"{self.player_info['name']}",
-            description=f"Builder Base Data",
-            color=discord.Color.gold()
-        )
-        builder_embed.add_field(name="Builder Hall", value=self.player_info['builderHallLevel'], inline=False)
-        builder_embed.add_field(name="League", value=self.player_info['builderBaseLeague']['name'], inline=False)
-        builder_embed.add_field(name="Trophies", value=self.player_info['builderBaseTrophies'], inline=False)
-        builder_embed.add_field(name="Peak", value=self.player_info['bestBuilderBaseTrophies'], inline=False)
-        
-        if 'league' in self.player_info and 'iconUrls' in self.player_info['league']:
-            builder_embed.set_thumbnail(url=self.player_info['league']['iconUrls']['medium'])
-        embeds.append(builder_embed)
+
+        if 'builderHallLevel' in self.player_info:
+            builder_embed = discord.Embed(
+                title=f"{self.player_info['name']}",
+                description="Builder Base Data",
+                color=discord.Color.gold()
+            )
+            builder_embed.add_field(name="Builder Hall", value=self.player_info['builderHallLevel'], inline=False)
+            builder_league = self.player_info.get('builderBaseLeague', {}).get('name', 'Unranked')
+            builder_embed.add_field(name="League", value=builder_league, inline=False)
+            builder_embed.add_field(name="Trophies", value=self.player_info.get('builderBaseTrophies', 0), inline=False)
+            builder_embed.add_field(name="Peak", value=self.player_info.get('bestBuilderBaseTrophies', 0), inline=False)
+            embeds.append(builder_embed)
         
         #Generate footers for embeds
         for i, embed in enumerate(embeds):
@@ -321,7 +352,7 @@ class WarTracker:
     async def automatic_poll(self):
         print(f"Polling Clash of Clans API for war status for clan {self.clan_tag}")
         
-        war_data = coc_api.get_current_war(self.clan_tag)
+        war_data = await asyncio.to_thread(coc_api.get_current_war, self.clan_tag)
         
         # Check if there's no error and the war is in preparation or in progress
         if 'error' not in war_data and war_data['state'] == 'inWar':
@@ -358,6 +389,7 @@ class WarTracker:
         else:
             # Once the war ends, stop frequent polling and switch back to daily polling
             print(f"War has ended for clan {self.clan_tag}. Stopping frequent polling.")
+            await self.manual_poll()
             self.poll_war_end.stop()  # Stop the frequent polling
 
             # Check if the automatic_poll is already running before starting it again
@@ -368,9 +400,9 @@ class WarTracker:
 
 
     async def manual_poll(self):
-        war_data = coc_api.get_current_war(self.clan_tag)
-        war_attacks = war_data['attacksPerMember']
-        if 'error' not in war_data and war_data['state'] == 'inWar':
+        war_data = await asyncio.to_thread(coc_api.get_current_war, self.clan_tag)
+        if 'error' not in war_data and war_data.get('state') in {'inWar', 'warEnded'}:
+            war_attacks = war_data['attacksPerMember']
             for member in war_data['clan']['members']:
                 player_tag = member['tag']
                 player_name = member['name']
@@ -412,7 +444,7 @@ class WarStatusView(discord.ui.View):
             embed.add_field(name="Your Stars", value=war_info['clan']['stars'], inline=True)
             embed.add_field(name="Opponent Stars", value=war_info['opponent']['stars'], inline=True)
             embed.add_field(name=" ", value=" ", inline=False)
-            embed.add_field(name="Your Destruction", value=f"{war_info['clan']['destructionPercentage']:.2f}%", inline=True)
+            embed.add_field(name="Your Destruction", value=f"{war_info['clan']['destructionPercentage']:.0f}%", inline=True)
             embed.add_field(name="Opponent Destruction", value=f"{war_info['opponent']['destructionPercentage']:.2f}%", inline=True)
             embed.add_field(name=" ", value=" ", inline=False)
             embed.set_thumbnail(url=war_info['clan']['badgeUrls']['medium'])
@@ -423,7 +455,7 @@ class WarStatusView(discord.ui.View):
             embed = discord.Embed(
                 title="No Current War",
                 description="There is no war currently in progress for this clan.",
-                color=discord.Color.gray()
+                color=discord.Color.dark_grey()
             )
             embeds.append(embed)
 
@@ -432,7 +464,8 @@ class WarStatusView(discord.ui.View):
 def setup_commands(bot):
     #Register slash commands to bot
     @bot.tree.command(name="set_tag", description="Set the clan tag for this server")
-    @commands.cooldown(rate=1, per=30, type=commands.BucketType.user)
+    @app_commands.guild_only()
+    @app_commands.checks.cooldown(1, 30.0)
     async def set_tag(interaction: discord.Interaction, clan_tag: str):
         user = interaction.user
         guild = interaction.guild
@@ -445,7 +478,7 @@ def setup_commands(bot):
         # Check if the user is the server owner or an admin
         if guild.owner_id == user.id or user.guild_permissions.administrator:
             # Validate the new clan tag
-            if not coc_api.validate_tag(clan_tag):
+            if not await asyncio.to_thread(coc_api.validate_tag, clan_tag):
                 await interaction.response.send_message(f"Invalid clan tag '{clan_tag}', try again.", ephemeral=True)
                 return
 
@@ -454,7 +487,7 @@ def setup_commands(bot):
                 tracked_servers[old_clan_tag].remove(guild_id)
                 if not tracked_servers[old_clan_tag]:
                     print(f"Stopping auto-polling for old clan tag {old_clan_tag}")
-                    active_clan_polling[old_clan_tag].automatic_poll.stop()
+                    active_clan_polling[old_clan_tag].automatic_poll.cancel()
                     del active_clan_polling[old_clan_tag]
                     del tracked_servers[old_clan_tag]
 
@@ -481,13 +514,14 @@ def setup_commands(bot):
     
     # Get clan info
     @bot.tree.command(name="claninfo", description="Get basic clan information")
-    @commands.cooldown(rate=1, per=30, type=commands.BucketType.user) 
+    @app_commands.guild_only()
+    @app_commands.checks.cooldown(1, 30.0)
     async def claninfo(interaction: discord.Interaction, clan_tag: str = None):
         if clan_tag is None:
             clan_tag = utils.get_clan_tag(interaction.guild_id)
         
         if clan_tag:
-            clan_info = coc_api.get_clan_info(clan_tag)
+            clan_info = await asyncio.to_thread(coc_api.get_clan_info, clan_tag)
             if 'error' in clan_info:
                 await interaction.response.send_message("Could not retrieve clan info")
                 return
@@ -500,11 +534,12 @@ def setup_commands(bot):
     
     # Get member list
     @bot.tree.command(name="members", description="Get list of members")
-    @commands.cooldown(rate=1, per=30, type=commands.BucketType.user) 
+    @app_commands.guild_only()
+    @app_commands.checks.cooldown(1, 30.0)
     async def members(interaction: discord.Interaction):
         clan_tag = utils.get_clan_tag(interaction.guild_id)
         if clan_tag:
-            clan_info = coc_api.get_clan_info(clan_tag)
+            clan_info = await asyncio.to_thread(coc_api.get_clan_info, clan_tag)
             if 'error' in clan_info:
                 await interaction.response.send_message("Could not retrieve clan info")
                 return
@@ -522,7 +557,8 @@ def setup_commands(bot):
     
     # Get player info
     @bot.tree.command(name="player", description="Get player data with player tag")
-    @commands.cooldown(rate=1, per=30, type=commands.BucketType.user) 
+    @app_commands.guild_only()
+    @app_commands.checks.cooldown(1, 30.0)
     async def player(interaction: discord.Interaction, player_input: str):
         # If input starts with '#', treat it as a player tag
         if player_input.startswith("#"):
@@ -535,7 +571,7 @@ def setup_commands(bot):
                 return
 
             # Fetch clan information
-            clan_info = coc_api.get_clan_info(clan_tag)
+            clan_info = await asyncio.to_thread(coc_api.get_clan_info, clan_tag)
             if 'error' in clan_info:
                 await interaction.response.send_message("Could not retrieve clan info")
                 return
@@ -552,7 +588,7 @@ def setup_commands(bot):
             player_tag = matching_member['tag']
 
         # Fetch player info from the API
-        player_info = coc_api.get_player_info(player_tag)
+        player_info = await asyncio.to_thread(coc_api.get_player_info, player_tag)
 
         if 'error' in player_info:
             await interaction.response.send_message(f"Could not retrieve data for player with tag {player_tag}")
@@ -563,15 +599,20 @@ def setup_commands(bot):
         await interaction.response.send_message(embed=view.embeds[0], view=view)
     
     @bot.tree.command(name="pollwar", description="Manually poll for current war data")
-    @commands.cooldown(rate=1, per=600, type=commands.BucketType.user)  # 1 use per 10 minutes per user
+    @app_commands.guild_only()
+    @app_commands.checks.cooldown(1, 600.0)
     async def poll_war(interaction: discord.Interaction):
         clan_tag = utils.get_clan_tag(interaction.guild_id)
+        if not clan_tag:
+            await interaction.response.send_message("No clan tag is set for this server. Use /set_tag <tag> to set one.")
+            return
         war_tracker = WarTracker(clan_tag)
         result_message = await war_tracker.manual_poll()
         await interaction.response.send_message(result_message) 
 
     @bot.tree.command(name="warstats", description="Get player war statistics by player name (in clan) or tag")
-    @commands.cooldown(rate=1, per=30, type=commands.BucketType.user) 
+    @app_commands.guild_only()
+    @app_commands.checks.cooldown(1, 30.0)
     async def warstats(interaction: discord.Interaction, player_input: str):
         # If input starts with '#', treat it as a player tag
         if player_input.startswith("#"):
@@ -584,7 +625,7 @@ def setup_commands(bot):
                 return
 
             # Fetch clan information
-            clan_info = coc_api.get_clan_info(clan_tag)
+            clan_info = await asyncio.to_thread(coc_api.get_clan_info, clan_tag)
             if 'error' in clan_info:
                 await interaction.response.send_message("Could not retrieve clan info")
                 return
@@ -607,62 +648,23 @@ def setup_commands(bot):
             await interaction.response.send_message(f"No data found for player {player_tag}")
             return  # Exit early to avoid further interaction responses
 
-        # Continue only if player_stats exists
-        embed = discord.Embed(
-            title=f"{player_stats['name']} | {player_tag}",
-            description=f"Clashbots Tracked War Stats",
-            color=discord.Color.red()
+        embed = build_war_stats_embed(
+            player_stats,
+            f"{player_stats['name']} | {player_tag}",
+            discord.Color.red(),
         )
-        # War stats section
-        embed.add_field(name="🛡️ Wars", value=player_stats['wars_attacked'], inline=True)
-        embed.add_field(name="✅ Completed", value=player_stats['used_all_attacks'], inline=True)
-        embed.add_field(name="📈 Completion Rate", value=f"{player_stats['used_all_attacks'] / player_stats['wars_attacked']:.2f}" if player_stats['wars_attacked'] > 0 else "0.00", inline=True)
-
-        embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Attack stats section
-        embed.add_field(name="⚔️ Attacks", value=player_stats['total_attacks'], inline=True)
-        embed.add_field(name="🏹 Possible Attacks", value=player_stats['total_possible_attacks'], inline=True)
-        embed.add_field(name="📈 Attack Rate", value=f"{player_stats['total_attacks'] / player_stats['total_possible_attacks']:.2f}" if player_stats['total_possible_attacks'] > 0 else "0.00", inline=True)
-
-        embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Star stats section
-        embed.add_field(name="⭐ Stars", value=player_stats['total_stars'], inline=True)
-        embed.add_field(name="✨ Average Stars", value=f"{player_stats['average_stars']:.2f}", inline=True)
-        embed.add_field(name="📊 Star Efficiency", value=f"{(player_stats['total_stars'] / (player_stats['total_attacks'] * 3)) * 100:.2f}%" if player_stats['total_attacks'] > 0 else "0.00%", inline=True)
-
-        embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Destruction stats section
-        embed.add_field(name="🔥 Destruction", value=f"{player_stats['total_destruction_percentage']:.2f}%", inline=True)
-        embed.add_field(name="💥 Average Destruction", value=f"{player_stats['average_destruction_percentage']:.2f}%", inline=True)
-        embed.add_field(name="📊 Destruction Efficiency", value=f"{(player_stats['total_destruction_percentage'] / (player_stats['total_attacks'] * 100)) * 100:.2f}%" if player_stats['total_attacks'] > 0 else "0.00%", inline=True)
-
-        embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Star type stats section
-        embed.add_field(name="🌟🌟🌟", value=player_stats['three_stars'], inline=True)
-        embed.add_field(name="⭐⭐", value=player_stats['two_stars'], inline=True)
-        embed.add_field(name="⭐", value=player_stats['one_stars'], inline=True)
-
-        embed.add_field(name="\u200b", value="\u200b", inline=False)  # Blank separator
-
-        # Final stats section
-        embed.add_field(name="🌟 3-Star Rate", value=f"{player_stats['three_stars'] / player_stats['total_attacks']:.2f}" if player_stats['total_stars'] > 0 else "0.00", inline=True)
-        embed.add_field(name="🍩 Donuts", value=player_stats['total_attacks'] - (player_stats['three_stars'] + player_stats['two_stars'] + player_stats['one_stars']), inline=True)
-
         await interaction.response.send_message(embed=embed)
 
-    @bot.tree.command(name="currentwar", description="Get player war statistics by player name (in clan) or tag")
-    @commands.cooldown(rate=1, per=30, type=commands.BucketType.user)
+    @bot.tree.command(name="currentwar", description="Show the current war for a clan")
+    @app_commands.guild_only()
+    @app_commands.checks.cooldown(1, 30.0)
     async def currentwar(interaction: discord.Interaction, clan_tag: str = None):
         # Get the clan tag either from the argument or from the server's saved data
         if clan_tag is None:
             clan_tag = utils.get_clan_tag(interaction.guild_id)
 
         if clan_tag:
-            war_info = coc_api.get_current_war(clan_tag)
+            war_info = await asyncio.to_thread(coc_api.get_current_war, clan_tag)
             if 'error' in war_info:
                 await interaction.response.send_message("Could not retrieve war info")
                 return
@@ -673,7 +675,15 @@ def setup_commands(bot):
 
 
     @bot.tree.command(name="enablewartracking", description="Enable automatic polling for the server's set clan tag") 
+    @app_commands.guild_only()
     async def enable_wartracking(interaction: discord.Interaction):
+        if not utils.is_admin_or_owner(interaction):
+            await interaction.response.send_message(
+                "Only the server owner or an administrator can enable war tracking.",
+                ephemeral=True,
+            )
+            return
+
         guild_id = str(interaction.guild_id)
         guild_data = utils.load_guild_data()
 
@@ -705,7 +715,15 @@ def setup_commands(bot):
         await interaction.response.send_message(f"Automatic war tracking enabled for clan {clan_tag} in this server.")
 
     @bot.tree.command(name="disablewartracking", description="Disable automatic polling for the server's set clan tag")
+    @app_commands.guild_only()
     async def disable_wartracking(interaction: discord.Interaction):
+        if not utils.is_admin_or_owner(interaction):
+            await interaction.response.send_message(
+                "Only the server owner or an administrator can disable war tracking.",
+                ephemeral=True,
+            )
+            return
+
         guild_id = str(interaction.guild_id)
         guild_data = utils.load_guild_data()
 
@@ -725,13 +743,30 @@ def setup_commands(bot):
         utils.save_guild_data(guild_data)
 
         # Remove the guild from the tracked_servers list for this clan
-        tracked_servers[clan_tag].remove(guild_id)
+        tracking_guilds = tracked_servers.get(clan_tag, [])
+        if guild_id in tracking_guilds:
+            tracking_guilds.remove(guild_id)
 
         # If no more servers are tracking this clan, stop polling
-        if not tracked_servers[clan_tag]:
-            active_clan_polling[clan_tag].automatic_poll.stop()
-            del active_clan_polling[clan_tag]
-            del tracked_servers[clan_tag]
+        if not tracking_guilds:
+            war_tracker = active_clan_polling.pop(clan_tag, None)
+            if war_tracker:
+                war_tracker.automatic_poll.cancel()
+                war_tracker.poll_war_end.cancel()
+            tracked_servers.pop(clan_tag, None)
             print(f"Stopped all auto-polling for {clan_tag}")
 
         await interaction.response.send_message(f"Automatic war tracking disabled for clan {clan_tag} in this server.")
+
+    @bot.tree.error
+    async def on_app_command_error(interaction, error):
+        if isinstance(error, app_commands.CommandOnCooldown):
+            message = f"That command is on cooldown. Try again in {error.retry_after:.1f} seconds."
+        else:
+            print(f"Unhandled application command error: {error!r}")
+            message = "That command could not be completed. Please try again."
+
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)

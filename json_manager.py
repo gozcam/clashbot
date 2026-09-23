@@ -1,26 +1,30 @@
-import json
-from utils import format_time
 import os
+
+import json
 from filelock import FileLock
+
 # Path to the JSON file where player stats are stored
 STATS_FILE = 'player_stats.json'
-LOCK_FILE = '.lock'
+LOCK_FILE = '.player_stats.lock'
 
 # Load player data from JSON
 def load_player_data():
     lock = FileLock(LOCK_FILE)
-    with lock: 
-        if os.path.exists(STATS_FILE):
-            with open(STATS_FILE, 'r') as f:
-                return json.load(f)
-        return {"players": {}}
+    with lock:
+        try:
+            with open(STATS_FILE, 'r', encoding='utf-8') as stats_file:
+                return json.load(stats_file)
+        except FileNotFoundError:
+            return {"players": {}}
 
 # Save player data to JSON
 def save_player_data(data):
     lock = FileLock(LOCK_FILE)
     with lock:
-        with open(STATS_FILE, 'w') as f:
-            json.dump(data, f, indent=4)
+        temporary_file = f'{STATS_FILE}.tmp'
+        with open(temporary_file, 'w', encoding='utf-8') as stats_file:
+            json.dump(data, stats_file, indent=4)
+        os.replace(temporary_file, STATS_FILE)
 
 # Check if an attack already exists for a player
 def is_duplicate_attack(player_data, war_id, attack_time):
@@ -75,8 +79,8 @@ def update_player_stats(player_tag, player_name, war_id, attack_time, stars, des
     remove_oldest_attack(player_data)
     # Add war to war list if not there, and also add to possible attacks
     if war_id not in player_data['wars']:
-        if len(player_data['wars']) > 8:
-            player_data['attacks'].pop(0)
+        if len(player_data['wars']) >= 9:
+            player_data['wars'].pop(0)
         player_data['wars'].append(war_id)
         player_data['wars_attacked'] += 1
         player_data['total_possible_attacks'] += war_attacks

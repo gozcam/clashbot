@@ -1,28 +1,42 @@
 import os
 import json
-import requests
-import sqlite3
 from datetime import datetime
 
+from filelock import FileLock
+
 CLAN_TAGS_FILE = "clan_tags.json"
+CLAN_TAGS_LOCK_FILE = ".clan_tags.lock"
+
+
+def _load_clan_tags():
+    try:
+        with open(CLAN_TAGS_FILE, 'r', encoding='utf-8') as clan_tags_file:
+            return json.load(clan_tags_file)
+    except FileNotFoundError:
+        return {}
+
+
+def _save_clan_tags(data):
+    temporary_file = f'{CLAN_TAGS_FILE}.tmp'
+    with open(temporary_file, 'w', encoding='utf-8') as clan_tags_file:
+        json.dump(data, clan_tags_file, indent=4)
+    os.replace(temporary_file, CLAN_TAGS_FILE)
+
 
 # Load clan tags
 def load_clan_tags():
-    if os.path.exists(CLAN_TAGS_FILE):
-        with open(CLAN_TAGS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
+    with FileLock(CLAN_TAGS_LOCK_FILE):
+        return _load_clan_tags()
 
 # Save clan tags w/ guild id
 def save_clan_tag(guild_id, clan_tag):
-    clan_tags = load_clan_tags()
-    clan_tags[str(guild_id)] = {
-        "clan_tag": clan_tag,
-        "auto_polling": False 
-    }
-    
-    with open(CLAN_TAGS_FILE, 'w') as f:
-        json.dump(clan_tags, f, indent=4)
+    with FileLock(CLAN_TAGS_LOCK_FILE):
+        clan_tags = _load_clan_tags()
+        clan_tags[str(guild_id)] = {
+            "clan_tag": clan_tag,
+            "auto_polling": False
+        }
+        _save_clan_tags(clan_tags)
 
 # Get clan tag for guild
 def get_clan_tag(guild_id):
@@ -52,8 +66,10 @@ def get_auto_polling_clans():
     return {guild_id: info["clan_tag"] for guild_id, info in guild_data.items() if info.get("auto_polling", False)}
 
 def is_admin_or_owner(interaction):
-    return (interaction.user.guild_permissions.administrator or 
+    return (interaction.guild is not None and
+            (interaction.user.guild_permissions.administrator or
             interaction.guild.owner_id == interaction.user.id)
+            )
 
 def format_time(coc_time, type=1, timezone='UTC'):
     # Parse the time string from the format "YYYYMMDDTHHMMSS.sssZ"
@@ -70,15 +86,11 @@ def format_time(coc_time, type=1, timezone='UTC'):
         return f"{formatted_date} {formatted_time}"
     
 def load_guild_data():
-    try:
-        with open('clan_tags.json', 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
+    return load_clan_tags()
 
 # Save the guilds and their set_tags to the JSON file
 def save_guild_data(data):
-    with open('clan_tags.json', 'w') as f:
-        json.dump(data, f, indent=4)
+    with FileLock(CLAN_TAGS_LOCK_FILE):
+        _save_clan_tags(data)
 
 
